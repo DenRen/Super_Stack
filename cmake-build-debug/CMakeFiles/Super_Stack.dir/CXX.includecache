@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/tester/Documents/GitHub/Super_Stack/main.cpp
+cstdio
+-
+cstdlib
+-
+random
+-
+cassert
+-
+
