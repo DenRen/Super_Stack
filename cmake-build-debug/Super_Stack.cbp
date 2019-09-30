@@ -84,6 +84,9 @@
 				</MakeCommands>
 			</Target>
 		</Build>
+		<Unit filename="/home/tester/Documents/GitHub/Super_Stack/Super_Stack_Library.h">
+			<Option target="Super_Stack"/>
+		</Unit>
 		<Unit filename="/home/tester/Documents/GitHub/Super_Stack/main.cpp">
 			<Option target="Super_Stack"/>
 		</Unit>

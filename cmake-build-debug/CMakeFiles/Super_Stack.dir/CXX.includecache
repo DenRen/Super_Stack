@@ -6,7 +6,7 @@
 
 #IncludeRegexTransform: 
 
-/home/tester/Documents/GitHub/Super_Stack/main.cpp
+/home/tester/Documents/GitHub/Super_Stack/Super_Stack_Library.h
 cstdio
 -
 cstdlib
@@ -15,4 +15,10 @@ random
 -
 cassert
 -
+
+/home/tester/Documents/GitHub/Super_Stack/main.cpp
+cstdio
+-
+Super_Stack_Library.h
+/home/tester/Documents/GitHub/Super_Stack/Super_Stack_Library.h
 
