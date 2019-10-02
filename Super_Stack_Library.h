@@ -4,6 +4,8 @@
 
 #ifndef SUPER_STACK_SUPER_STACK_LIBRARY_H
 #define SUPER_STACK_SUPER_STACK_LIBRARY_H
+
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
@@ -15,24 +17,29 @@
 
 namespace stck {
     typedef int type_Stack;
-    typedef long long canary_t;
+    typedef size_t canary_t;
     const int UNDERFLOW_STACK = 1431193171; //(const int)'UNFS';
     const int CRITICAL_ERROR = 1128616530;  //(const int)'CERR';
+    const int CRITICAL_ERROR_REALLOC = 1128616524;  //(const int)'CERL';
+
     struct Secure_Stack_t {
-        type_Stack *data;   //Хранит начало стека
-        size_t size;      //Хранит длину стека в type_Stack
-        long number;
-        size_t real_size; //В байтах
+        type_Stack *data;       //Хранит начало стека
+        size_t size;            //Хранит длину стека в type_Stack
+        long number;            //Не делать size_t!!!
+        size_t real_size;       //В байтах
         int Sec_Level;
-        type_Stack *begin; //Хранит истинное начало массива
+        type_Stack *begin;      //Хранит истинное начало массива
         canary_t *ptr_canary1;
         canary_t *ptr_canary2;
         canary_t canary1;
         canary_t canary2;
         size_t hash;
         float expansion_coef;
+        FILE *dump_file;
+        bool dumpOn;
     };
 }
+
 static size_t MurmurHash2 (const char *key, size_t len);
 
 /* IBM864
@@ -48,7 +55,8 @@ static size_t MurmurHash2 (const char *key, size_t len);
 142) └
 143) ┘
 */
-static int Dump (stck::Secure_Stack_t *Stack, FILE *file);
+
+int Dump (stck::Secure_Stack_t *Stack, FILE *file);
 
 static inline void set_canary_to_Stack (stck::Secure_Stack_t *Stack);
 
@@ -62,78 +70,15 @@ int StackPush (stck::Secure_Stack_t *Stack, stck::type_Stack value);
 
 int StackPop (stck::Secure_Stack_t *Stack, stck::type_Stack *value);
 
+int StackSize (stck::Secure_Stack_t *Stack, size_t *value);
+
 static int security_check (stck::Secure_Stack_t *Stack);
 
 static void updating_security_component_values (stck::Secure_Stack_t *Stack);
 
+void fill_poison_Stack (stck::Secure_Stack_t *Stack);
 
-int Dump (stck::Secure_Stack_t *Stack, FILE *file) {
-    static size_t number_calls = 0;
-
-    fprintf (file,
-             "=======================================================\n"
-             "┌─────────────────────────┬─────────────────┐\n"
-             "│Dump: %19zu"            "|       SIZE      |\n"
-             "├───────────────────┬─────┘                 |\n", number_calls);
-    fprintf (file,
-             "|Expension:         |data       %12zu|\n"
-             "|            %3.3f  |array      %12zu|\n"
-             "└───────────────────┴───────────────────────┘\n", Stack->size, Stack->expansion_coef, Stack->real_size);
-    switch (Stack->Sec_Level) {
-        case 2: {
-            fprintf (file, "┌────────────────────────────────────────┐\n"
-                           "│              hash    Calc-hash    equal│\n"
-                           "│HASH: %12zu %12zu %8d|\n"
-                           "└────────────────────────────────────────┘\n",
-                     Stack->hash, MurmurHash2 ((char *) Stack->begin, Stack->real_size),
-                     Stack->hash == MurmurHash2 ((char *) Stack->begin, Stack->real_size));
-        }
-        case 1: {
-            fprintf (file,
-                     "┌─────────────────────────────────────────────────────┐\n"
-                     "│    pointer            *pointer    value_can    equal│\n"
-                     "│C1: %12p %12lld %12lld %8d│\n"
-                     "│C2: %12p %12lld %12lld %8d│\n"
-                     "└─────────────────────────────────────────────────────┘\n\n",
-                     Stack->ptr_canary1, *(Stack->ptr_canary1), Stack->canary1,
-                     (*(Stack->ptr_canary1) == Stack->canary1),
-                     Stack->ptr_canary2, *(Stack->ptr_canary2), Stack->canary2,
-                     (*(Stack->ptr_canary2) == Stack->canary2));
-        }
-    }
-
-    typeof (Stack->size) polovina_size = Stack->size / 2;
-    if (sizeof (stck::type_Stack) <= 4) {
-        for (size_t i = 0; i < Stack->size; i++) {
-            if (i % 2) {
-                if (polovina_size + i / 2 + 1 <= Stack->number)
-                    fprintf (file, "*");
-                else
-                    fprintf (file, " ");
-                fprintf (file, "[%10ld] = %10lld\n", polovina_size + i / 2, Stack->data[polovina_size + i / 2]);
-            } else {
-                if (i / 2 <= Stack->number - 1)
-                    fprintf (file, "*");
-                else
-                    fprintf (file, " ");
-                fprintf (file, "[%10ld] = %10lld", i / 2, Stack->data[i / 2]);
-                if (i + 1 < Stack->size)
-                    fprintf (file, " | ");
-            }
-        }
-    } else {
-        for (long i = 0; i < Stack->size; i++) {
-            if (i <= Stack->number - 1)
-                fprintf (file, "*");
-
-            fprintf (file, "[%18ld] = %19lld\n", i, Stack->data[i]);
-
-        }
-    }
-
-    printf ("\n");
-    number_calls++;
-}
+void Unit_Test ();
 
 //----------------------------------------------------------------------
 //! This function does a full security check
@@ -144,19 +89,20 @@ int Dump (stck::Secure_Stack_t *Stack, FILE *file) {
 //----------------------------------------------------------------------
 int security_check (stck::Secure_Stack_t *Stack) {
 
-    assert (Stack->data != nullptr);
-    assert (Stack->begin != nullptr);
+    assert (Stack->data != nullptr && (void *) Stack->data != (void *) Stack->dump_file);
+    assert (Stack->begin != nullptr && (void *) Stack->begin != (void *) Stack->dump_file);
     assert (Stack->expansion_coef > 0);
     assert (Stack->size >= (unsigned) Stack->expansion_coef + 1);
     assert (Stack->real_size >= Stack->size);
-    assert (Stack->Sec_Level >= 0 && Stack->Sec_Level <= 3);
+    assert (Stack->Sec_Level >= 0 && Stack->Sec_Level < 3);
     assert (Stack->number >= 0);
+    assert (!(Stack->dumpOn && Stack->dump_file == nullptr));
 
-    //Dump (Stack);
+    if (Stack->dumpOn)
+        Dump (Stack, Stack->dump_file);
 
     switch (Stack->Sec_Level) {
         case 2: {
-            size_t g = MurmurHash2 ((char *) Stack->begin, Stack->real_size);
             if (Stack->hash != MurmurHash2 ((char *) Stack->begin, Stack->real_size)) {
                 PRINT_ERROR ("MurmurHash2")
                 return stck::CRITICAL_ERROR;
@@ -198,18 +144,18 @@ int StackPop (stck::Secure_Stack_t *Stack, stck::type_Stack *value) {
         *value = Stack->data[Stack->number];
     } else {
         Stack->number++;
-        PRINT_WARNING ("Underflow stack!")
+        //PRINT_WARNING ("Underflow stack!")
         updating_security_component_values (Stack);
         return stck::UNDERFLOW_STACK;
     }
-    auto FFFFF = (long) ((typeof (Stack->expansion_coef)) Stack->size / (1 + Stack->expansion_coef));
+
     if (Stack->number + 1 < (typeof (Stack->number)) ((typeof (Stack->expansion_coef)) Stack->size /
                                                       (1 + Stack->expansion_coef))) { //Сужаем стек
         Stack->size = (size_t) ((typeof (Stack->number)) Stack->size / (1 + Stack->expansion_coef));
 
         size_t size_stack = Stack->size * sizeof (stck::type_Stack);
         switch (Stack->Sec_Level) {
-            case 2:;
+            case 2:
             case 1:
                 size_stack += 2 * sizeof (stck::canary_t);
         }
@@ -217,13 +163,13 @@ int StackPop (stck::Secure_Stack_t *Stack, stck::type_Stack *value) {
         void *temp_ptr = realloc (Stack->begin, size_stack);
         if (temp_ptr == nullptr) {
             PRINT_ERROR("realloc returned nullptr")
-            //Dump(Stack);
-            return 1;
+            return stck::CRITICAL_ERROR_REALLOC;
         }
         Stack->begin = (stck::type_Stack *) temp_ptr;
         Stack->real_size = size_stack;
 
         switch (Stack->Sec_Level) {
+            case 2:
             case 1: {
                 set_canary_to_Stack (Stack);
                 CheckingCanary (Stack, true);
@@ -249,13 +195,15 @@ int StackPush (stck::Secure_Stack_t *Stack, stck::type_Stack value) {
     //
     if (security_check (Stack))
         return stck::CRITICAL_ERROR;
+
     // Каждый расширенный стек в 1 + expansion_coef больше, чем предыдущий
     if (Stack->number >= Stack->size) { //Расширяем стек
-        Stack->size = (typeof (Stack->size)) ((typeof (Stack->expansion_coef)) Stack->size *
-                                              (1 + Stack->expansion_coef));
+        Stack->size = (typeof (Stack->size)) (std::ceil((typeof (Stack->expansion_coef)) Stack->size *
+                                              (1 + Stack->expansion_coef)));
+
         typeof (Stack->size) size_stack = Stack->size * sizeof (stck::type_Stack);
         switch (Stack->Sec_Level) {
-            case 2:;
+            case 2:
             case 1:
                 size_stack += 2 * sizeof (stck::canary_t);
         }
@@ -263,25 +211,26 @@ int StackPush (stck::Secure_Stack_t *Stack, stck::type_Stack value) {
         void *temp_ptr = realloc (Stack->begin, size_stack);
         if (temp_ptr == nullptr) {
             PRINT_ERROR("realloc returned nullptr")
-            //Dump(Stack);
             return 1;
         }
         Stack->begin = (stck::type_Stack *) temp_ptr;
         Stack->real_size = size_stack;
 
         switch (Stack->Sec_Level) {
-            case 2:;
+            case 2:
             case 1: {
                 set_canary_to_Stack (Stack);
                 CheckingCanary (Stack, true);
+                break;
             }
+            case 0:
+                Stack->data = (stck::type_Stack *) temp_ptr;
         }
     }
 
     Stack->data[Stack->number++] = value;
 
     updating_security_component_values (Stack);
-    //Dump (Stack);
     return 0;
 }
 
@@ -291,11 +240,12 @@ int StackPush (stck::Secure_Stack_t *Stack, stck::type_Stack value) {
 //! @param [in] Stack Pointer stck::Secure_Stack_t
 //----------------------------------------------------------------------
 void updating_security_component_values (stck::Secure_Stack_t *Stack) {
+
     switch (Stack->Sec_Level) {
-        case 2:;
-        case 1: {
+        case 2:
+            fill_poison_Stack (Stack);
+        case 1:
             CheckingCanary (Stack, true);
-        }
     }
     if (Stack->Sec_Level >= 2)
         Stack->hash = MurmurHash2 ((char *) Stack->begin, Stack->real_size);
@@ -311,6 +261,9 @@ void updating_security_component_values (stck::Secure_Stack_t *Stack) {
 //! @return The execution status of this function
 //----------------------------------------------------------------------
 int StackConstruct (stck::Secure_Stack_t *Stack) {
+    if (Stack->begin != nullptr)
+        StackDestruct (Stack);
+
     if (Stack->size <=
         (typeof (Stack->size)) Stack->expansion_coef + 1) {   // Проверка на мин. размер стека, при котором работает
         Stack->size =
@@ -328,9 +281,10 @@ int StackConstruct (stck::Secure_Stack_t *Stack) {
         }
         case 0: {
             Stack->data = (stck::type_Stack *) calloc (size_stack, 1);
+            // Сверху этим я подчёркиваю, что пишу для машин с sizeof(char) == 1
             Stack->begin = Stack->data;
             if (Stack->data == nullptr) {
-                PRINT_ERROR("Calloc returned the nullptr");
+                PRINT_ERROR("Calloc returned the nullptr")
                 return 1;
             }
             Stack->number = 0;
@@ -339,15 +293,13 @@ int StackConstruct (stck::Secure_Stack_t *Stack) {
             // Дополнительные действия для модулей безопасности
             if (Stack->Sec_Level >= 1) {
                 set_canary_to_Stack (Stack);
-                // При помощи истинно рандомного числа запускаю srand()
+                // При помощи истинно рандомного числа идентифицирую srand()
                 std::random_device rd;
                 std::uniform_int_distribution<int> uid (0, 34);
                 srand (uid (rd));
-                CheckingCanary (Stack, true);    // Уставнавливаю нач. зна. канареек
             }
 
-            if (Stack->Sec_Level >= 2)
-                Stack->hash = MurmurHash2 ((char *) Stack->begin, Stack->real_size);
+            updating_security_component_values (Stack);
         }
     }
     return 0;
@@ -364,13 +316,9 @@ int StackDestruct (stck::Secure_Stack_t *Stack) {
     switch (Stack->Sec_Level) {
         case 2:
             Stack->hash = 0;
-        case 1: {
-            Stack->ptr_canary1 = nullptr;
-            Stack->ptr_canary2 = nullptr;
-        }
+        case 1:
         case 0: {
             free (Stack->begin);
-            Stack->size = 0;
             Stack->begin = nullptr;
         }
     }
@@ -413,6 +361,113 @@ inline void set_canary_to_Stack (stck::Secure_Stack_t *Stack) {
 }
 
 //----------------------------------------------------------------------
+//! This function fills the free cells of the stack with poison.
+//! The poison is randomly selected, in each cell it is the same.
+//!
+//! @param [in] Stack Pointer stck::Secure_Stack_t
+//----------------------------------------------------------------------
+void fill_poison_Stack (stck::Secure_Stack_t *Stack) {
+    // Предполагается, что эта функция вызывается после вызова
+    // security_check
+
+    auto poison = (typeof (*Stack->data)) random ();
+    auto size = (typeof (Stack->number)) Stack->size;
+    for (typeof (Stack->number) i = Stack->number; i < size; i++)
+        Stack->data[i] = poison;
+}
+
+//----------------------------------------------------------------------
+//! Returned size Stack
+//!
+//! @param [in] Stack Pointer stck::Secure_Stack_t
+//! @param [out] value Size of stack
+//! @return Error status
+//----------------------------------------------------------------------
+int StackSize (stck::Secure_Stack_t *Stack, size_t *value) {
+    if (security_check (Stack)) {
+        printf ("\n" "Error get size of stack\n");
+        return 1;
+    }
+    *value = Stack->size;
+    return 0;
+}
+
+//----------------------------------------------------------------------
+//! Outputs basic stack information to the specified stream
+//!
+//! @param [in] Stack Pointer stck::Secure_Stack_t
+//! @param [in] file Pointer to the stream where dump will be dumped
+//!
+//! @return Call number this function
+//----------------------------------------------------------------------
+int Dump (stck::Secure_Stack_t *Stack, FILE *file) {
+    static size_t number_calls = 0;
+    fprintf (file, "\n"
+                   "=======================================================\n"
+                   "┌─────────────────────────┬─────────────────┐\n"
+                   "│Dump: %19zu"            "|       SIZE      |\n"
+                   "├───────────────────┬─────┘                 |\n", number_calls);
+
+    fprintf (file,
+             "|Expension:         |data       %12zu|\n"
+             "|             %3.3f |array      %12zu|\n"
+             "└───────────────────┴───────────────────────┘\n", Stack->size, Stack->expansion_coef, Stack->real_size);
+    switch (Stack->Sec_Level) {
+        case 2: {
+            fprintf (file, "┌────────────────────────────────────────┐\n"
+                           "│              hash    Calc-hash    equal│\n"
+                           "│HASH: %12zu %12zu %8d|\n"
+                           "└────────────────────────────────────────┘\n",
+                     Stack->hash, MurmurHash2 ((char *) Stack->begin, Stack->real_size),
+                     Stack->hash == MurmurHash2 ((char *) Stack->begin, Stack->real_size));
+        }
+        case 1: {
+            fprintf (file,
+                     "┌─────────────────────────────────────────────────────┐\n"
+                     "│    pointer            *pointer    value_can    equal│\n"
+                     "│C1: %12p %12lld %12lld %8d│\n"
+                     "│C2: %12p %12lld %12lld %8d│\n"
+                     "└─────────────────────────────────────────────────────┘\n\n",
+                     Stack->ptr_canary1, *(Stack->ptr_canary1), Stack->canary1,
+                     (*(Stack->ptr_canary1) == Stack->canary1),
+                     Stack->ptr_canary2, *(Stack->ptr_canary2), Stack->canary2,
+                     (*(Stack->ptr_canary2) == Stack->canary2));
+        }
+    }
+
+    typeof (Stack->size) polovina_size = Stack->size / 2;
+    if (sizeof (stck::type_Stack) <= 4) {
+        for (typeof (Stack->size) i = 0; i < Stack->size; i++) {
+            if (i % 2) {
+                if (polovina_size + i / 2 + 1 <= Stack->number)
+                    fprintf (file, "*");
+                else
+                    fprintf (file, " ");
+                fprintf (file, "[%10ld] = %10lld\n", polovina_size + i / 2, Stack->data[polovina_size + i / 2]);
+            } else {
+                if (i / 2 < Stack->number)
+                    fprintf (file, "*");
+                else
+                    fprintf (file, " ");
+                fprintf (file, "[%10ld] = %10lld", i / 2, Stack->data[i / 2]);
+                if (i + 1 < Stack->size)
+                    fprintf (file, " | ");
+            }
+        }
+    } else {
+        for (typeof (Stack->size) i = 0; i < Stack->size; i++) {
+            if (i < Stack->number)
+                fprintf (file, "*");
+
+            fprintf (file, "[%18ld] = %19lld\n", i, Stack->data[i]);
+
+        }
+    }
+    fprintf (file, "\n");
+    number_calls++;
+    return number_calls;
+}
+
 //! Calculates a hash using the Murmur Hash 2 algorithm
 //! https://ru.wikipedia.org/wiki/MurmurHash2
 //! @param [in] key  Pointer to string
@@ -473,5 +528,6 @@ size_t MurmurHash2 (const char *key, size_t len) {
 
     return h;
 }
+
 
 #endif //SUPER_STACK_SUPER_STACK_LIBRARY_H
